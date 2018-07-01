@@ -9,7 +9,15 @@
  * This Work includes contributions authored by David E. Jones, not as a
  * "work for hire", who hereby disclaims any copyright to the same.
  */
-package org.moqui.impl.entity.janusgraph
+package org.moqui.addons.graph
+
+import org.janusgraph.core.JanusGraphTransaction
+import org.janusgraph.core.JanusGraphVertex
+import org.janusgraph.graphdb.database.StandardJanusGraph
+import org.janusgraph.graphdb.database.management.ManagementSystem
+import org.janusgraph.graphdb.transaction.StandardJanusGraphTx
+import org.moqui.impl.entity.EntityDatasourceFactoryImpl
+import org.janusgraph.core.schema.JanusGraphManagement
 
 import java.sql.Timestamp
 import java.sql.Date
@@ -25,14 +33,9 @@ import org.moqui.impl.entity.EntityValueImpl
 import org.moqui.entity.EntityValue
 import org.moqui.entity.EntityFind
 import org.moqui.impl.entity.FieldInfo
-import org.moqui.impl.entity.janusgraph.JanusGraphEntityConditionFactoryImpl
-import org.moqui.impl.entity.janusgraph.condition.JanusGraphEntityConditionImplBase
-import org.moqui.impl.entity.janusgraph.JanusGraphDatasourceFactory
-import org.moqui.impl.entity.janusgraph.JanusGraphEntityFind
-import org.moqui.impl.entity.janusgraph.JanusGraphUtils
+import org.moqui.addons.graph.JanusGraphDatasourceFactory
+import org.moqui.addons.graph.JanusGraphEntityFind
 
-
-import org.moqui.impl.entity.janusgraph.JanusGraphDatasourceFactory
 import org.janusgraph.core.JanusGraph
 
 import org.slf4j.Logger
@@ -41,14 +44,15 @@ import org.moqui.util.MNode
 
 class JanusGraphEntityValue extends EntityValueBase {
     protected final static Logger logger = LoggerFactory.getLogger(JanusGraphEntityValue.class)
-
+    protected String id
     protected JanusGraphDatasourceFactory ddf
-    protected JanusGraphEntityConditionFactoryImpl conditionFactory
+    //protected JanusGraphEntityConditionFactoryImpl conditionFactory
 
     JanusGraphEntityValue(EntityDefinition ed, EntityFacadeImpl efip, JanusGraphDatasourceFactory ddf) {
         super(ed, efip)
-        this.conditionFactory = new JanusGraphEntityConditionFactoryImpl(efip)
+        //this.conditionFactory = new JanusGraphEntityConditionFactoryImpl(efip)
         this.ddf = ddf
+        return
     }
 
     JanusGraphEntityValue(EntityDefinition ed, EntityFacadeImpl efip, JanusGraphDatasourceFactory ddf, Map valMap) {
@@ -56,53 +60,36 @@ class JanusGraphEntityValue extends EntityValueBase {
         this.ddf = ddf
     }
 
-    public void getCreateExtended(FieldInfo [] fieldList, Connection con) {
-        createExtended(fieldList, con)
+    StandardJanusGraph getDatabase() {
+        EntityFacadeImpl efi = getEntityFacadeImpl()
+        EntityDefinition ed = getEntityDefinition()
+        JanusGraphDatasourceFactory edfi = efi.getDatasourceFactory(ed.getEntityGroupName()) as JanusGraphDatasourceFactory
+        StandardJanusGraph janusGraph = edfi.getDatabase()
+        return janusGraph
     }
-
-    @Override
-    public void createExtended(FieldInfo [] fieldList, Connection con) {
-        EntityDefinition entityDefinition = getEntityDefinition()
-        logger.info("In JanusGraphEntityValue.create, fieldList: ${fieldList}")
-
-        JanusGraph janusGraph = ddf.getDatabase()
-        try {
-        } catch(Exception e6) {
-            throw new Exception(e6.getMessage())
-        }finally {
+    public EntityValue create() {
+        StandardJanusGraph janusGraph = getDatabase()
+        //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
+        ManagementSystem mgmt = janusGraph.openManagement()
+        StandardJanusGraphTx tx = mgmt.getWrappedTx()
+        EntityDefinition ed = getEntityDefinition()
+        String labelName = ed.getEntityNode().attribute("entity-name")
+        JanusGraphVertex v = tx.addVertex(labelName)
+        this.id = v.id()
+        List fieldNames = ed.getAllFieldNames()
+        EntityValue _this = this
+        fieldNames.each {fieldName ->
+            if (_this.get(fieldName)) {
+                v.property(fieldName, _this.get(fieldName))
+            }
         }
+        tx.commit()
+        return this
     }
 
-    @Override
-    public void updateExtended(FieldInfo [] pkFieldList, FieldInfo [] nonPkFieldList, Connection con) {
-
-        List <FieldInfo> fieldList = new ArrayList()
-        fieldList.addAll(nonPkFieldList)
-        //Lisin-map="ec.web.parameters"tOrderedSet newLOS = new ListOrderedSet(nonPkFieldList)
-        fieldList.addAll(pkFieldList)
-        logger.info("JanusGraphEntityValue.updateExtended, fieldList: ${fieldList}")
-
-        EntityDefinition entityDefinition = getEntityDefinition()
-        logger.info("In JanusGraphEntityValue.create, fieldList: ${fieldList}")
-
-        JanusGraph janusGraph = ddf.getDatabase()
-        try {
-        } catch(Exception e6) {
-            throw new Exception(e6.getMessage())
-        }finally {
-        }
-
+    String getId() {
+        return this.id
     }
-
-    @Override
-    void deleteExtended(Connection con) {
-    }
-
-    @Override
-    boolean refreshExtended() {
-        return true
-    }
-
     void buildAttributeValueMap( Map<String, Object> item, Map<String, Object> valueMap) {
         EntityDefinition entityDefinition = getEntityDefinition()
         ListOrderedSet fieldNames = entityDefinition.getFieldNames(true, true)
@@ -224,5 +211,41 @@ class JanusGraphEntityValue extends EntityValueBase {
         }
         logger.info("newValueMap: ${newValueMap}")
         return newValueMap
+    }
+
+    Class getDataTypeValue(fieldName) {
+
+        Object retVal
+        String labelString
+        EntityDefinition ed = getEntityDefinition()
+        MNode entityNode = ed.getEntityNode()
+        String fieldType = entityNode.attribute("type")
+        switch(fieldType) {
+            case "id":
+            case "id-long":
+            case "text-short":
+            case "text-medium":
+            case "text-long":
+            case "text-very-long":
+            case "text-indicator":
+                retVal = getString(fieldName)
+                break
+            case "number-integer":
+            case "number-decimal":
+            case "number-float":
+            case "currency-amount":
+            case "currency-precise":
+                retVal = getDouble(fieldName)
+                break
+            case "date":
+            case "time":
+            case "date-time":
+                retVal = getDate(fieldName
+                )
+                break
+            default:
+                retVal = get(fieldName)
+        }
+        return retVal
     }
 }

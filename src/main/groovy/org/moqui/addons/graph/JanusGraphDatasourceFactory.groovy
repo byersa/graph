@@ -9,9 +9,12 @@
  * This Work includes contributions authored by Al Byers, not as a
  * "work for hire", who hereby disclaims any copyright to the same.
  */
-package org.moqui.impl.entity.janusgraph
+package org.moqui.addons.graph
 
 import org.apache.tinkerpop.gremlin.structure.Edge
+import org.janusgraph.core.Multiplicity
+import org.janusgraph.core.schema.JanusGraphManagement
+import org.janusgraph.graphdb.database.management.ManagementSystem
 import org.moqui.impl.entity.EntityDefinition
 import org.moqui.impl.entity.EntityFacadeImpl
 import org.moqui.entity.EntityFind
@@ -36,10 +39,15 @@ import org.moqui.util.MNode
 
 import org.janusgraph.core.JanusGraphFactory
 import org.janusgraph.core.JanusGraph
+import org.janusgraph.core.schema.JanusGraphManagement
+import org.janusgraph.graphdb.database.management.ManagementSystem
 import org.janusgraph.core.VertexLabel
+import org.janusgraph.core.PropertyKey
 import org.janusgraph.core.EdgeLabel
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource
 import org.janusgraph.graphdb.database.management.ManagementSystem
+import org.janusgraph.graphdb.database.StandardJanusGraph
+
 
 
 
@@ -61,9 +69,9 @@ class JanusGraphDatasourceFactory implements EntityDatasourceFactory {
     protected MNode datasourceNode
     protected String tenantId
 
-    protected JanusGraph janusGraph
+    protected StandardJanusGraph janusGraph
     protected GraphTraversalSource janusGraphClient
-    protected ManagementSystem janusGraphMgmt
+    //protected JanusGraphManagement janusGraphMgmt
 
 JanusGraph janusGraph
 
@@ -74,13 +82,32 @@ JanusGraph janusGraph
         // local fields
         this.efi = (EntityFacadeImpl) ef
         this.datasourceNode = nd
-        this.tenantId = tenantId
 
-        janusGraph = this.open('inmemory')
-        janusGraphClient = janusGraph.traversal()
-        janusGraphMgmt - janusGraph.openManagement()
+        janusGraph = JanusGraphFactory.open('inmemory')
+        //janusGraphClient = janusGraph.traversal()
+        //janusGraphMgmt = janusGraph.openManagement()
         logger.info("janusGraphClient: ${janusGraphClient}")
+        initCreateAndUpdateStamps()
         return this
+    }
+
+    void initCreateAndUpdateStamps() {
+        logger.info("in initCreateAndUpdateStamp")
+        PropertyKey propKey
+        ManagementSystem mgmt = janusGraph.openManagement()
+        List <String> fieldNames = ["createdDate", "lastUpdatedStamp"]
+        fieldNames.each() { fieldName ->
+            propKey = mgmt.getPropertyKey(fieldName)
+            logger.info("propKey (1): ${propKey}")
+            if (!propKey) {
+                logger.info("fieldName: ${fieldName}")
+                mgmt.makePropertyKey(fieldName).dataType(java.util.Date.class).make()
+                propKey = mgmt.getPropertyKey(fieldName)
+                logger.info("propKey (2): ${propKey.name()}")
+            } else {
+                logger.info("existing propKey: ${fieldName}")
+            }
+        }
     }
 
     GraphTraversalSource getJanusGraphClient() { return janusGraphClient}
@@ -88,19 +115,17 @@ JanusGraph janusGraph
     /** Returns the main database access object for OrientDB.
      * Remember to call close() on it when you're done with it (preferably in a try/finally block)!
      */
-    JanusGraph getDatabase() { return janusGraph}
+    StandardJanusGraph getDatabase() { return janusGraph}
+    String getGroupName() { return datasourceNode.attribute("group-name")}
 
-    @Override
-    void destroy() {
-        return
-    }
     @Override
     EntityValue makeEntityValue(String entityName) {
         EntityDefinition entityDefinition = efi.getEntityDefinition(entityName)
         if (!entityDefinition) {
             throw new EntityException("Entity not found for name [${entityName}]")
         }
-        return new JanusGraphEntityValue(entityDefinition, efi, this)
+        JanusGraphEntityValue entityValue = new JanusGraphEntityValue(entityDefinition, efi, this)
+        return entityValue
     }
 
     @Override
@@ -114,43 +139,70 @@ JanusGraph janusGraph
     void checkAndAddTable(java.lang.String tableName) {
 
             logger.info("checking: ${tableName}")
-            // check to see if table is in schema. put it there if not
+        janusGraph.tx().rollback()
+        JanusGraphManagement mgmt = janusGraph.openManagement()
+        //JanusGraphManagement mgmt = janusGraph.openManagement()
+        logger.info("checking isOpen(1): ${mgmt.isOpen()}")
 
             String labelString
             def ed = efi.getEntityDefinition(tableName)
+            String entityName = ed.getEntityName()
             MNode entityNode = ed.getEntityNode()
             String graphMode = entityNode.attribute("graphMode")
-            if (graphMode && graphMode.toLowerCase() == "edge") {
-                EdgeLabel edgeLabel = janusGraphMgmt.getEdgeLabel(tableName)
-                if (!edgeLabel) {
-                    janusGraphMgmt.makeEdgeLabel(tableName)
+        Character edgeOrVertex = Character.toLowerCase(entityName.charAt(0))
+        logger.info("edgeOrVertex: ${edgeOrVertex}")
+        if (edgeOrVertex == 'e') {
+                EdgeLabel edgeLabel = mgmt.getOrCreateEdgeLabel(entityName)
+//                if (!edgeLabel) {
+//                    mgmt.makeEdgeLabel(entityName).multiplicity(Multiplicity.MULTI).make()
+//                }
+//                edgeLabel = mgmt.getEdgeLabel(entityName)
+                if (!edgeLabel || (edgeLabel.name() != entityName)) {
+                    throw new Exception( "Cannot create vertex label: " + entityName)
                 }
-                edgeLabel = janusGraphMgmt.getEdgeLabel(tableName)
-                if (!edgeLabel || (edgeLabel.label != tableName)) {
-                    throw new Exception( "Cannot create vertex label: " + tableName)
+        }
+        if (edgeOrVertex == 'v') {
+            VertexLabel vertexLabel = mgmt.getOrCreateVertexLabel(entityName)
+//            VertexLabel vertexLabel = mgmt.getVertexLabel(entityName)
+//                if (!vertexLabel) {
+//                    mgmt.makeVertexLabel(entityName).make()
+//                }
+//                vertexLabel = mgmt.getVertexLabel(entityName)
+                if (!vertexLabel || (vertexLabel.name() != entityName)) {
+                    throw new Exception( "Cannot create vertex label: " + entityName)
                 }
-            } else {
-                VertexLabel vertexLabel = janusGraphMgmt.getVertexLabel(tableName)
-                if (!vertexLabel) {
-                    janusGraphMgmt.makeVertexLabel(tableName)
-                }
-                vertexLabel = janusGraphMgmt.getVertexLabel(tableName)
-                if (!vertexLabel || (vertexLabel.label != tableName)) {
-                    throw new Exception( "Cannot create vertex label: " + tableName)
-                }
-            }
+        }
 
-            List <String> fieldNames = ed.getFieldNames(true, true)
+        if (edgeOrVertex == 'e' || edgeOrVertex == 'v') {
+            List<String> fieldNames = ed.getFieldNames(true, true)
             MNode nd
             String typ
             Class clazz
-            fieldNames.each() { nodeName ->
-                nd = ed.getFieldNode(nodeName)
-                typ = nd.attribute("type")
-                clazz = getDataType(typ)
-                janusGraphMgmt.makePropertyKey(nodeName).dataType(clazz).make()
+            PropertyKey propKey
+            fieldNames.each() { fieldName ->
+                propKey = mgmt.getPropertyKey(fieldName)
+                if (!propKey) {
+                    nd = ed.getFieldNode(fieldName)
+                    typ = nd.attribute("type")
+                    clazz = getDataType(typ)
+                    logger.info("fieldName: ${fieldName}")
+                    mgmt.makePropertyKey(fieldName).dataType(clazz).make()
+                    propKey = mgmt.getPropertyKey(fieldName)
+                    logger.info("propKey: ${propKey.name()}")
+                } else {
+                    logger.info("existing propKey: ${propKey.name()}")
+                }
             }
-        janusGraphMgmt.commit()
+        } else {
+            logger.info("NOT processing: ${entityName}")
+        }
+        Iterator <VertexLabel> iter = mgmt.getVertexLabels().iterator()
+        VertexLabel lbl
+        while (iter.hasNext()) {
+           lbl = iter.next()
+            logger.info("vertex label: ${lbl.name()}")
+        }
+        mgmt.commit()
         return
     }
 
@@ -193,4 +245,10 @@ JanusGraph janusGraph
     }
     // Dummied out methods
     boolean checkTableExists(java.lang.String s) {return null}
+
+    void destroy() {
+        super.destroy()
+        janusGraph.close()
+        return
+    }
 }

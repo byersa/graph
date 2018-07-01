@@ -1,11 +1,8 @@
-package org.moqui.impl.entity.janusgraph
+package org.moqui.addons.graph
 
 import java.sql.Timestamp
-import org.moqui.impl.entity.janusgraph.JanusGraphEntityConditionFactoryImpl
 import org.moqui.impl.entity.EntityDefinition
 import org.moqui.entity.EntityCondition
-import org.moqui.entity.EntityCondition.ComparisonOperator.*
-import org.moqui.impl.entity.janusgraph.condition.JanusGraphEntityConditionImplBase
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -148,5 +145,8 @@ class JanusGraphUtils {
         
         return attrVal
     }
-    
+
+    static void debugStart (fromName) {
+        return
+    }
 }

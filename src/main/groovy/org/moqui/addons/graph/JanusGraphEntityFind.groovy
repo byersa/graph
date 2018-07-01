@@ -9,7 +9,7 @@
  * This Work includes contributions authored by David E. Jones, not as a
  * "work for hire", who hereby disclaims any copyright to the same.
  */
-package org.moqui.impl.entity.janusgraph
+package org.moqui.addons.graph
 
 import java.sql.ResultSet
 import java.sql.Connection
@@ -29,9 +29,8 @@ import org.moqui.impl.entity.EntityDefinition
 import org.moqui.impl.entity.EntityListImpl
 import org.moqui.impl.entity.EntityFindBuilder
 
-import org.moqui.impl.entity.janusgraph.condition.JanusGraphEntityConditionImplBase
-import org.moqui.impl.entity.janusgraph.JanusGraphEntityValue
-import org.moqui.impl.entity.janusgraph.JanusGraphDatasourceFactory
+import org.moqui.addons.graph.JanusGraphEntityValue
+import org.moqui.addons.graph.JanusGraphDatasourceFactory
 import org.janusgraph.core.JanusGraph
 import org.moqui.impl.context.ExecutionContextFactoryImpl
 
@@ -129,14 +128,6 @@ class JanusGraphEntityFind {
 //        }
         return null
     }
-
-    EntityListIterator iteratorExtended(JanusGraphEntityConditionImplBase whereCondition, JanusGraphEntityConditionImplBase havingCondition,
-                                        List<String> orderByExpanded) throws EntityException {
-        EntityDefinition ed = this.getEntityDef()
-        // If has primary hash key and range condition, then do query
-        // else, do scan
-    }
-
 
     /** @see org.moqui.entity.EntityFind#list() */
     EntityList list() throws EntityException {
