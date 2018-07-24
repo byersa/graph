@@ -14,6 +14,7 @@
     </always-actions>
     <subscreens default-item="" >
         <subscreens-item name="test" location="component://graph/screen/graph/test.xml"/>
+        <subscreens-item name="sandbox" location="component://graph/screen/graph/sandbox.xml"/>
     </subscreens>
     <widgets>
         <render-mode>

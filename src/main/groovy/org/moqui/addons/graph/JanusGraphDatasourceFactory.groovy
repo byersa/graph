@@ -27,6 +27,8 @@ import org.joda.time.format.*
 import javax.sql.DataSource
 
 import org.moqui.entity.*
+
+import java.sql.Timestamp
 import java.sql.Types
 
 import java.util.HashMap
@@ -83,7 +85,10 @@ JanusGraph janusGraph
         this.efi = (EntityFacadeImpl) ef
         this.datasourceNode = nd
 
-        janusGraph = JanusGraphFactory.open('inmemory')
+        janusGraph = JanusGraphFactory.build().
+                set("storage.backend", "inmemory").
+//                set("storage.hostname", "127.0.0.1").
+                open()
         //janusGraphClient = janusGraph.traversal()
         //janusGraphMgmt = janusGraph.openManagement()
         logger.info("janusGraphClient: ${janusGraphClient}")
@@ -115,7 +120,9 @@ JanusGraph janusGraph
     /** Returns the main database access object for OrientDB.
      * Remember to call close() on it when you're done with it (preferably in a try/finally block)!
      */
-    StandardJanusGraph getDatabase() { return janusGraph}
+    StandardJanusGraph getDatabase() {
+        return janusGraph
+    }
     String getGroupName() { return datasourceNode.attribute("group-name")}
 
     @Override
@@ -231,12 +238,12 @@ JanusGraph janusGraph
                         case "number-float":
                         case "currency-amount":
                         case "currency-precise":
+                        case "time":
                             dataTypeClass = (Class)Double.class
                             break
                         case "date":
-                        case "time":
                         case "date-time":
-                             dataTypeClass = (Class)Date.class
+                             dataTypeClass = (Class)java.util.Date.class
                              break
                         default:
                              dataTypeClass = (Class)String.class

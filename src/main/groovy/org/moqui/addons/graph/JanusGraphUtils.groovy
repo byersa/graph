@@ -1,7 +1,16 @@
 package org.moqui.addons.graph
 
+import org.janusgraph.graphdb.database.StandardJanusGraph
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource
+import org.apache.tinkerpop.gremlin.structure.Edge
+import org.apache.tinkerpop.gremlin.structure.Vertex
+
 import java.sql.Timestamp
 import org.moqui.impl.entity.EntityDefinition
+import org.moqui.entity.EntityFacade
+import org.moqui.entity.EntityDatasourceFactory
+import org.moqui.addons.graph.JanusGraphEntityValue
 import org.moqui.entity.EntityCondition
 
 import org.slf4j.Logger
@@ -11,7 +20,7 @@ import org.moqui.util.MNode
 class JanusGraphUtils {
 
     protected final static Logger logger = LoggerFactory.getLogger(JanusGraphUtils.class)
-    
+
     static Object getAttributeValue(String fieldName, Map<String,?>valueMap, EntityDefinition ed) {
     
         Object attrVal = new Object()
@@ -144,6 +153,37 @@ class JanusGraphUtils {
         }
         
         return attrVal
+    }
+
+    static Long addEdge(Long fromVertexId, Long edgeId, Long toVertexId, String label,
+                        Map<String,Object> edgeProperties, EntityFacade entityFacade) {
+        Long id
+        //EntityDatasourceFactory edfi = entityFacade.getDatasourceFactory("tranactional_nosql")
+        JanusGraphDatasourceFactory edfi = entityFacade.getDatasourceFactory("transactional_nosql") as JanusGraphDatasourceFactory
+        StandardJanusGraph graph = edfi.getDatabase()
+        GraphTraversalSource g = graph.traversal()
+
+        //JanusGraphEntityValue entityValue = edfi.makeEntityValue(label)
+        //entityValue.setAll(edgeProperties)
+        Edge e
+
+        if (!edgeId) {
+            long fromId = fromVertexId.longValue()
+            long toId = toVertexId.longValue()
+            Vertex toV = g.V(toId).next()
+            logger.info("in addEdge, toV: ${toV}}")
+            e = g.V(fromId).as('f').addE(label).as('e').to(toV).select('e').next()
+            id = e.id().getRelationId()
+        } else {
+            id = edgeId
+            e = g.E(edgeId).next()
+        }
+        //Object val
+        //for (String key in edgeProperties ) {
+        edgeProperties.each {key, val ->
+            e.property(key, val)
+        }
+        return id
     }
 
     static void debugStart (fromName) {

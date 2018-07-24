@@ -22,7 +22,6 @@
     </transition>
 
     <subscreens default-item="" >
-        <subscreens-item name="test" location="component://graph/screen/test.xml"/>
     </subscreens>
     <widgets>
         <render-mode>

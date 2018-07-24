@@ -16,11 +16,17 @@ import org.janusgraph.core.JanusGraphVertex
 import org.janusgraph.graphdb.database.StandardJanusGraph
 import org.janusgraph.graphdb.database.management.ManagementSystem
 import org.janusgraph.graphdb.transaction.StandardJanusGraphTx
+import org.janusgraph.graphdb.vertices.StandardVertex
 import org.moqui.impl.entity.EntityDatasourceFactoryImpl
 import org.janusgraph.core.schema.JanusGraphManagement
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal
+
+import org.apache.tinkerpop.gremlin.structure.Vertex
+import org.apache.tinkerpop.gremlin.structure.VertexProperty
 
 import java.sql.Timestamp
-import java.sql.Date
+import java.util.Date
 import java.sql.Connection
 import java.text.SimpleDateFormat
 import org.apache.commons.collections.set.ListOrderedSet
@@ -44,7 +50,7 @@ import org.moqui.util.MNode
 
 class JanusGraphEntityValue extends EntityValueBase {
     protected final static Logger logger = LoggerFactory.getLogger(JanusGraphEntityValue.class)
-    protected String id
+    //protected long id
     protected JanusGraphDatasourceFactory ddf
     //protected JanusGraphEntityConditionFactoryImpl conditionFactory
 
@@ -69,120 +75,98 @@ class JanusGraphEntityValue extends EntityValueBase {
     }
     public EntityValue create() {
         StandardJanusGraph janusGraph = getDatabase()
+        GraphTraversalSource g = janusGraph.traversal()
         //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
-        ManagementSystem mgmt = janusGraph.openManagement()
-        StandardJanusGraphTx tx = mgmt.getWrappedTx()
+        //ManagementSystem mgmt = janusGraph.openManagement()
+        //StandardJanusGraphTx tx = mgmt.getWrappedTx()
         EntityDefinition ed = getEntityDefinition()
         String labelName = ed.getEntityNode().attribute("entity-name")
-        JanusGraphVertex v = tx.addVertex(labelName)
-        this.id = v.id()
+        Vertex v = g.addV(labelName).iterator().next()
+        this.set("id", v.id())
+        java.util.Date sameDate = new java.util.Date(new Timestamp(System.currentTimeMillis()).getTime())
+        this.set("createdDate", sameDate)
+        this.set("lastUpdatedStamp", sameDate)
         List fieldNames = ed.getAllFieldNames()
         EntityValue _this = this
+        VertexProperty vProp
         fieldNames.each {fieldName ->
             if (_this.get(fieldName)) {
-                v.property(fieldName, _this.get(fieldName))
+                vProp = v.property(fieldName,
+                        _this.getDataValue(fieldName)
+                )
+                logger.info("Property for (${fieldName}): ${vProp.value()}")
             }
         }
-        tx.commit()
+        //java.util.Date sameDate = new java.util.Date()
+        //v.property("createdDate", sameDate)
+        //v.property("lastUpdatedStamp", sameDate)
+        Map map = new HashMap()
+        map.putAll(v.properties().collectEntries {it ->[(it.key()):it.value()]})
+        logger.info("Created vertex: ${map}")
+        logger.info("Created entity: ${this.getValueMap()}")
+        g.tx().commit()
         return this
     }
 
-    String getId() {
-        return this.id
-    }
-    void buildAttributeValueMap( Map<String, Object> item, Map<String, Object> valueMap) {
-        EntityDefinition entityDefinition = getEntityDefinition()
-        ListOrderedSet fieldNames = entityDefinition.getFieldNames(true, true)
-        for(String fieldName in fieldNames) {
-            Object attrVal = JanusGraphUtils.getAttributeValue(fieldName, valueMap, entityDefinition)
-            logger.info("JanusGraphEntityValue.buildAttributeValueMap(250) attrVal: ${attrVal}")
-            if (attrVal != null) {
-                logger.info("JanusGraphEntityValue.buildAttributeValueMap(252) fieldName: ${fieldName}, attrVal: ${attrVal}")
-                item.put(fieldName, attrVal)
-            } else {
-                logger.info("JanusGraphEntityValue.buildAttributeValueMap(remove - 255) fieldName: ${fieldName}")
-                item.remove(fieldName)
+    public EntityValue update() {
+        StandardJanusGraph janusGraph = getDatabase()
+        GraphTraversalSource g = janusGraph.traversal()
+        //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
+        //ManagementSystem mgmt = janusGraph.openManagement()
+        //StandardJanusGraphTx tx = mgmt.getWrappedTx()
+        EntityDefinition ed = getEntityDefinition()
+        //JanusGraphVertex v = mgmt.getSchemaVertex(mgmt.getSchemaElement(this.getId()))
+        Vertex v = g.V(this.getId()).iterator().next()
+        java.util.Date sameDate = new java.util.Date(new Timestamp(System.currentTimeMillis()).getTime())
+        this.set("lastUpdatedStamp", sameDate)
+        List fieldNames = ed.getAllFieldNames()
+        EntityValue _this = this
+        VertexProperty vProp
+        fieldNames.each {fieldName ->
+            if (_this.get(fieldName)) {
+                vProp = v.property(fieldName,
+                        _this.getDataValue(fieldName)
+                )
+                logger.info("Property for (${fieldName}): ${vProp.value()}")
             }
         }
-
+        //java.util.Date sameDate = new java.util.Date()
+        //v.property("createdDate", sameDate)
+        //v.property("lastUpdatedStamp", sameDate)
+        Map map = new HashMap()
+        map.putAll(v.properties().collectEntries {it ->[(it.key()):it.value()]})
+        logger.info("Updated vertex: ${map}")
+        logger.info("Updated entity: ${this.getValueMap()}")
+        g.tx().commit()
+        JanusGraphTransaction tx2 = janusGraph.buildTransaction().start()
+        JanusGraphVertex v2 = tx2.getVertex(this.getId())
+        Map map2 = new HashMap()
+        map2.putAll(v2.properties().collectEntries {it ->[(it.key()):it.value()]})
+        logger.info("Updated vertex(2): ${map2}")
+        return this
     }
 
-    void buildAttributeValueUpdateMap( Map<String, Object> item, Map<String, Object> valueMap) {
-        EntityDefinition entityDefinition = getEntityDefinition()
-        ListOrderedSet fieldNames = entityDefinition.getFieldNames(true, true)
-        for(String fieldName in fieldNames) {
-            Object attrVal = JanusGraphUtils.getAttributeValueUpdate(fieldName, valueMap, entityDefinition)
-            logger.info("JanusGraphEntityValue.buildAttributeValueMap(250) attrVal: ${attrVal}")
-            if (attrVal != null) {
-                logger.info("JanusGraphEntityValue.buildAttributeValueMap(252) fieldName: ${fieldName}, attrVal: ${attrVal}")
-                item.put(fieldName, attrVal)
-            } else {
-                logger.info("JanusGraphEntityValue.buildAttributeValueMap(remove - 255) fieldName: ${fieldName}")
-                item.remove(fieldName)
-            }
-        }
-
+    public EntityValue delete() {
+        StandardJanusGraph janusGraph = getDatabase()
+        GraphTraversalSource g = janusGraph.traversal()
+        //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
+        //JanusGraphVertex v = tx.getVertex(this.getId())
+        Vertex v = g.V(this.getId()).iterator().next()
+        //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
+        //ManagementSystem mgmt = janusGraph.openManagement()
+        //StandardJanusGraphTx tx = mgmt.getWrappedTx()
+        //EntityDefinition ed = getEntityDefinition()
+        //JanusGraphVertex v = mgmt.getSchemaVertex(mgmt.getSchemaElement(this.getId()))
+        v.remove()
+        g.tx().commit()
+        return
     }
 
+    Object getId() {
+        return this.get("id")
+    }
     void testFunction() {
         return;
-    }
-
-    //void buildEntityValueMap( Map<String, AttributeValue> attributeValueItem) {
-    void buildEntityValueMap( ) {
-        return;
-
-        String fieldName, fieldType
-        Object attrVal
-        def tm, num
-        for(Map.Entry fieldEntry in attributeValueItem) {
-            fieldName = fieldEntry.key
-            logger.info("JanusGraphEntityValue.buildEntityValueMap(280) fieldName: ${fieldName}")
-            MNode fieldNode = this.getEntityDefinition().getFieldNode(fieldName)
-            fieldType = fieldNode."@type"
-            logger.info("JanusGraphEntityValue.buildEntityValueMap(282) type: ${fieldType}")
-            switch(fieldType) {
-                case "id":
-                case "id-long":
-                case "text-short":
-                case "text-medium":
-                case "text-long":
-                case "text-very-long":
-                case "text-indicator":
-                    this.set(fieldName, attributeValueItem[fieldName].getS())
-                    break
-                case "number-integer":
-                case "number-decimal":
-                case "number-float":
-                case "currency-amount":
-                case "currency-precise":
-                case "time":
-                    attrVal = attributeValueItem[fieldName]
-                    num = attrVal.getN()
-                    this.set(fieldName, Long.parseLong(num))
-                    break
-                case "date":
-                    attrVal = attributeValueItem[fieldName]
-                    logger.info("JanusGraphEntityValue.buildEntityValueMap(300) attrVal: ${attrVal}")
-                    tm = attrVal.getN()
-                    Date dt = new Date(tm)
-                    logger.info("JanusGraphEntityValue.buildEntityValueMap(303) tm: ${tm}, dt: ${dt}")
-                    this.set(fieldName, dt )
-                    break
-                case "date-time":
-                    attrVal = attributeValueItem[fieldName]
-                    logger.info("JanusGraphEntityValue.buildEntityValueMap(313) attrVal: ${attrVal}")
-                    tm = attrVal.getS()
-                    logger.info("JanusGraphEntityValue.buildEntityValueMap(315) tm: ${tm}")
-                    Timestamp ts = Timestamp.valueOf(tm)
-                    logger.info("JanusGraphEntityValue.buildEntityValueMap(317) ts: ${ts}")
-                    this.set(fieldName, ts )
-                    break
-                default:
-                    this.set(fieldName, null)
-            }
-        }
-
     }
 
     EntityValue cloneValue() {
@@ -194,6 +178,11 @@ class JanusGraphEntityValue extends EntityValueBase {
         // FIXME
         return this
     }
+
+    public void createExtended(FieldInfo[] fieldInfoArray, Connection con) {return }
+    public void updateExtended(FieldInfo[] pkFieldArray, FieldInfo[] nonPkFieldArray, Connection con) {return }
+    public void deleteExtended(Connection con) {return }
+    public boolean refreshExtended() { return null}
 
     HashMap<String, Object> getValueMap() {
         HashMap<String, Object> newValueMap = new HashMap()
@@ -213,13 +202,13 @@ class JanusGraphEntityValue extends EntityValueBase {
         return newValueMap
     }
 
-    Class getDataTypeValue(fieldName) {
+    Object getDataValue(fieldName) {
 
         Object retVal
-        String labelString
+        String labelString, fieldType
         EntityDefinition ed = getEntityDefinition()
-        MNode entityNode = ed.getEntityNode()
-        String fieldType = entityNode.attribute("type")
+        MNode fieldNode = ed.getFieldNode(fieldName)
+        fieldType = fieldNode.attribute("type")
         switch(fieldType) {
             case "id":
             case "id-long":
@@ -240,12 +229,16 @@ class JanusGraphEntityValue extends EntityValueBase {
             case "date":
             case "time":
             case "date-time":
-                retVal = getDate(fieldName
-                )
+                retVal = new java.util.Date(this.get(fieldName).getTime())
                 break
             default:
                 retVal = get(fieldName)
         }
         return retVal
+    }
+
+    EntityValue setAll(Map <String,Object> fields) {
+        EntityValue entityValue = super.setAll(fields)
+        return entityValue
     }
 }
