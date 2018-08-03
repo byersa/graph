@@ -29,6 +29,7 @@ import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSo
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal
 import org.apache.tinkerpop.gremlin.structure.Vertex
 import org.apache.tinkerpop.gremlin.structure.Edge
+import org.apache.tinkerpop.gremlin.structure.Direction
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -94,6 +95,14 @@ class TestCRUD extends Specification {
         //ec.user.logoutUser()
     }
 
+    def "get_root_vertex"() {
+        when:
+        org.apache.tinkerpop.gremlin.structure.Vertex v=JanusGraphUtils.getRootVertex(ec)
+
+        then:
+        assert v
+    }
+
     def "create_PartyContactInfo"() {
         when:
         //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
@@ -108,8 +117,8 @@ class TestCRUD extends Specification {
 
         logger.info("contactNumber equal: ${vrtx.property('contactNumber').value() == pci.get('contactNumber')}")
         vrtx.property('contactNumber').value() == pci.get('contactNumber')
+        g.tx().commit()
         g.close()
-        //tx.commit()
         return
     }
 
@@ -133,8 +142,8 @@ class TestCRUD extends Specification {
 
         logger.info("emailAddress equal: ${vrtx.property('emailAddress').value() == pci.get('emailAddress')}")
         vrtx.property('emailAddress').value() == pci.get('emailAddress')
+        g.tx().commit()
         g.close()
-        //tx.commit()
         return
     }
 
@@ -154,6 +163,7 @@ class TestCRUD extends Specification {
             logger.info("in testCreate.groovy delete, vrtx: ${vrtx}")
         }
 
+        g.tx().commit()
         assert (!vrtx)
         return
     }
@@ -164,22 +174,24 @@ class TestCRUD extends Specification {
         pci2.create()
         logger.info("in TestCRUD create_PartyContactInfo_edge, pci2: ${pci2}")
 
-        long fromId = (long)pci.get("id")
-        long toId = (long)pci2.get("id")
-        logger.info("in TestCRUD, fromId: ${fromId}")
-        logger.info("in TestCRUD, toId: ${toId}")
+        org.apache.tinkerpop.gremlin.structure.Vertex fromVertex = pci.getVertex()
+        org.apache.tinkerpop.gremlin.structure.Vertex toVertex = pci2.getVertex()
+        //org.apache.tinkerpop.gremlin.structure.Edge
+        logger.info("in TestCRUD, fromVertex: ${fromVertex}")
+        logger.info("in TestCRUD, toVertex: ${toVertex}")
         Map <String,Object> edgePropMap = [prorate: 25]
-        def edgeId = JanusGraphUtils.addEdge(fromId, null, toId, "edgeLabel", edgePropMap, ec.entity)
-        logger.info("in TestCRUD, edgeId: ${edgeId}")
+        org.apache.tinkerpop.gremlin.structure.Edge edge = JanusGraphUtils.addEdge(fromVertex, null, toVertex, "edgeLabel", edgePropMap, ec.entity)
+        logger.info("in TestCRUD, edge: ${edge}")
 
         then:
         GraphTraversalSource g = janusGraph.traversal()
-        Edge edge = g.V(fromId).outE().has("prorate", 25).next()
-        logger.info("in testCreate.groovy, edge: ${edge}")
-        logger.info("in testCreate.groovy, edge.prorate: ${edge.property('prorate')}")
+        Edge edge2 = fromVertex.edges(Direction.OUT).next()
+        logger.info("in testCreate.groovy, edge2: ${edge2}")
+        logger.info("in testCreate.groovy, edge2.prorate: ${edge2.property('prorate')}")
 
-        logger.info("prorate equal: ${edge.property('prorate').value() == 25}")
-        edge.property('prorate').value() == 25
+        logger.info("prorate equal: ${edge2.property('prorate').value() == 25}")
+        edge2.property('prorate').value() == 25
+        g.tx().commit()
         g.close()
         return
     }
@@ -192,7 +204,7 @@ class TestCRUD extends Specification {
         List<Vertex > arr = []
         //EntityValue pci
         (0..5).eachWithIndex{ int entry, int i ->
-            arr[i] = g.addV("testVertex")
+            arr[i] = g.addV("vPartyContactInfo")
                     .property("fullName", "Create User" + i)
                     .property("emailAddress", "createUser{i}@test.com")
                     .property("contactNumber", "801-40${i}-5111")
@@ -213,10 +225,10 @@ class TestCRUD extends Specification {
 
 
         when:
-        JanusGraphEntityFind fnd = new JanusGraphEntityFind(ddf)
-        def resultList = fnd.condition(arr[0].id(), "testEdge", [["prorate", "gt", new Float(20.0)]], null).list()
+        JanusGraphEntityFind fnd = new JanusGraphEntityFind(ec.entity)
+        def resultList = fnd.condition(arr[0].id(), "vPartyContactInfo", "testEdge", [["prorate", "gt", new Float(20.0)]], null).list()
         logger.info("in TestCRUD, resultList: ${resultList}")
-        def resultList2 = fnd.condition(arr[0].id(), "testEdge", [["prorate", "lte", new Float(40.0)]],
+        def resultList2 = fnd.condition(arr[0].id(), "vPartyContactInfo", "testEdge", [["prorate", "lte", new Float(40.0)]],
                 [["sales", "gte", new Float(3000000.0)]]).list()
         logger.info("in TestCRUD, resultList2: ${resultList2}")
 
@@ -224,6 +236,7 @@ class TestCRUD extends Specification {
         assert resultList.size() == 3
         assert resultList2.size() == 3
         cleanup:
+        g.tx().commit()
         g.close()
         return
     }
@@ -257,7 +270,7 @@ class TestCRUD extends Specification {
 
 
         when:
-        JanusGraphEntityFind fnd = new JanusGraphEntityFind(ddf)
+        JanusGraphEntityFind fnd = new JanusGraphEntityFind(ec.entity)
         def result = fnd.condition(arr[0].id(), null, null, null).one()
         logger.info("in TestCRUD, result: ${result}")
         def result2 = fnd.condition(null, null, null, [["sales", "gte", new Float(3000000.0)]]).one()
@@ -268,6 +281,7 @@ class TestCRUD extends Specification {
         assert result2
 
         cleanup:
+        g.tx().commit()
         g.close()
         return
     }

@@ -52,7 +52,9 @@ class JanusGraphEntityValue extends EntityValueBase {
     protected final static Logger logger = LoggerFactory.getLogger(JanusGraphEntityValue.class)
     //protected long id
     protected JanusGraphDatasourceFactory ddf
+    protected org.apache.tinkerpop.gremlin.structure.Vertex vertex
     //protected JanusGraphEntityConditionFactoryImpl conditionFactory
+
 
     JanusGraphEntityValue(EntityDefinition ed, EntityFacadeImpl efip, JanusGraphDatasourceFactory ddf) {
         super(ed, efip)
@@ -66,6 +68,10 @@ class JanusGraphEntityValue extends EntityValueBase {
         this.ddf = ddf
     }
 
+    JanusGraphEntityValue(EntityDefinition ed, EntityFacadeImpl efip, org.apache.tinkerpop.gremlin.structure.Vertex v) {
+        super(ed, efip)
+        setVertex(v)
+    }
     StandardJanusGraph getDatabase() {
         EntityFacadeImpl efi = getEntityFacadeImpl()
         EntityDefinition ed = getEntityDefinition()
@@ -82,6 +88,7 @@ class JanusGraphEntityValue extends EntityValueBase {
         EntityDefinition ed = getEntityDefinition()
         String labelName = ed.getEntityNode().attribute("entity-name")
         Vertex v = g.addV(labelName).iterator().next()
+        setVertex(v)
         this.set("id", v.id())
         java.util.Date sameDate = new java.util.Date(new Timestamp(System.currentTimeMillis()).getTime())
         this.set("createdDate", sameDate)
@@ -100,11 +107,12 @@ class JanusGraphEntityValue extends EntityValueBase {
         //java.util.Date sameDate = new java.util.Date()
         //v.property("createdDate", sameDate)
         //v.property("lastUpdatedStamp", sameDate)
-        Map map = new HashMap()
-        map.putAll(v.properties().collectEntries {it ->[(it.key()):it.value()]})
-        logger.info("Created vertex: ${map}")
-        logger.info("Created entity: ${this.getValueMap()}")
+        //Map map = new HashMap()
+        //map.putAll(v.properties().collectEntries {it ->[(it.key()):it.value()]})
+        //logger.info("Created vertex: ${map}")
+        //logger.info("Created entity: ${this.getValueMap()}")
         g.tx().commit()
+        g.close()
         return this
     }
 
@@ -116,7 +124,14 @@ class JanusGraphEntityValue extends EntityValueBase {
         //StandardJanusGraphTx tx = mgmt.getWrappedTx()
         EntityDefinition ed = getEntityDefinition()
         //JanusGraphVertex v = mgmt.getSchemaVertex(mgmt.getSchemaElement(this.getId()))
-        Vertex v = g.V(this.getId()).iterator().next()
+        Vertex v
+        if (!vertex) {
+            v = g.V(this.getId()).iterator().next()
+            setVertex(v)
+        } else {
+            v = vertex
+        }
+
         java.util.Date sameDate = new java.util.Date(new Timestamp(System.currentTimeMillis()).getTime())
         this.set("lastUpdatedStamp", sameDate)
         List fieldNames = ed.getAllFieldNames()
@@ -138,11 +153,12 @@ class JanusGraphEntityValue extends EntityValueBase {
         logger.info("Updated vertex: ${map}")
         logger.info("Updated entity: ${this.getValueMap()}")
         g.tx().commit()
-        JanusGraphTransaction tx2 = janusGraph.buildTransaction().start()
-        JanusGraphVertex v2 = tx2.getVertex(this.getId())
-        Map map2 = new HashMap()
-        map2.putAll(v2.properties().collectEntries {it ->[(it.key()):it.value()]})
-        logger.info("Updated vertex(2): ${map2}")
+        g.close()
+        //JanusGraphTransaction tx2 = janusGraph.buildTransaction().start()
+        //JanusGraphVertex v2 = tx2.getVertex(this.getId())
+        //Map map2 = new HashMap()
+        //map2.putAll(v2.properties().collectEntries {it ->[(it.key()):it.value()]})
+        //logger.info("Updated vertex(2): ${map2}")
         return this
     }
 
@@ -159,12 +175,14 @@ class JanusGraphEntityValue extends EntityValueBase {
         //JanusGraphVertex v = mgmt.getSchemaVertex(mgmt.getSchemaElement(this.getId()))
         v.remove()
         g.tx().commit()
+        g.close()
         return
     }
 
     Object getId() {
         return this.get("id")
     }
+
     void testFunction() {
         return;
     }
@@ -237,8 +255,14 @@ class JanusGraphEntityValue extends EntityValueBase {
         return retVal
     }
 
-    EntityValue setAll(Map <String,Object> fields) {
-        EntityValue entityValue = super.setAll(fields)
+    EntityValue setAll(Map <String,Object> fieldMap) {
+        EntityValue entityValue = super.setAll(fieldMap)
         return entityValue
+    }
+    org.apache.tinkerpop.gremlin.structure.Vertex getVertex() {
+            return vertex
+    }
+    void setVertex(org.apache.tinkerpop.gremlin.structure.Vertex v) {
+        vertex = v
     }
 }

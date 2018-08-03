@@ -25,6 +25,7 @@ import org.moqui.entity.EntityDynamicView
 import org.moqui.entity.EntityCondition.JoinOperator
 import org.moqui.entity.EntityList
 import org.moqui.entity.EntityValue
+import org.moqui.impl.entity.EntityValueImpl
 import org.moqui.entity.EntityFacade
 import org.moqui.entity.EntityListIterator
 import org.moqui.entity.EntityException
@@ -53,20 +54,24 @@ class JanusGraphEntityFind { //extends EntityFindBase
     protected final static Logger logger = LoggerFactory.getLogger(JanusGraphEntityFind.class)
     protected JanusGraph janusGraph
     protected JanusGraphDatasourceFactory ddf
+    protected EntityFacadeImpl efi
     protected Object fromVertexId
     protected String edgeLabel
+    protected String vertexLabel
     protected List <List<Object>> edgeProperties
     protected List <List<Object>> vertexProperties
+    protected String groupName = "transactional_nosql"
 
-    JanusGraphEntityFind(JanusGraphDatasourceFactory ddf) {
-        this.ddf = ddf
+    JanusGraphEntityFind(EntityFacadeImpl efi) {
+        this.efi = efi
+        this.ddf = efi.getDatasourceFactory(groupName) as JanusGraphDatasourceFactory
         this.janusGraph = this.ddf.getDatabase()
         return
     }
 
     // ======================== Run Find Methods ==============================
 
-    org.apache.tinkerpop.gremlin.structure.Vertex one() throws EntityException {
+    EntityValue one() throws EntityException {
 
         long startTime = System.currentTimeMillis()
         List retList = null
@@ -88,15 +93,17 @@ class JanusGraphEntityFind { //extends EntityFindBase
         }
 
         List <Vertex> resultList = g7.toList()
+        EntityValue entityValue
         if (resultList.size()) {
-            return resultList[0]
+            entityValue = new JanusGraphEntityValue(resultList[0])
+            return entityValue
         } else {
             return null
         }
     }
 
     /** @see org.moqui.entity.EntityFind#list() */
-    List <Map<String,Object>> list() {
+    List <EntityValue> list() {
         long startTime = System.currentTimeMillis()
         //EntityDefinition ed = this.getEntityDef()
         List retList = null
@@ -124,7 +131,12 @@ class JanusGraphEntityFind { //extends EntityFindBase
         } else {
             g4 = g3
         }
-        g6 = g4.inV()
+        if (vertexLabel) {
+            g6 = g4.inV().hasLabel(vertexLabel)
+
+        } else {
+            g6 = g4.inV()
+        }
         if (vertexProperties && vertexProperties.size()) {
             def gNext = g6
             vertexProperties.each { tuple ->
@@ -134,16 +146,30 @@ class JanusGraphEntityFind { //extends EntityFindBase
         } else {
             g7 = g6
         }
-        List <Map <String, Object>> resultList = g7.toList()
+        EntityValue entityValue
+        List <Vertex> lst = g7.toList()
+        List <EntityValue> resultList = new ArrayList()
+        EntityDefinition ed
+        lst.each {v ->
+            ed = efi.getEntityDefinition(v.label())
+            // TODO: if no ed then throw exception
+            entityValue = new JanusGraphEntityValue(ed, efi, v)
+            resultList << entityValue
+        }
         return resultList
     }
 
-    JanusGraphEntityFind condition(Object fromVertexId, String edgeLabel, List <List<Object>> edgeProperties, List <List<Object>> vertexProperties) {
+    JanusGraphEntityFind condition(Object fromVertexId, String vertexLabel, String edgeLabel, List <List<Object>> edgeProperties, List <List<Object>> vertexProperties) {
         this.fromVertexId = fromVertexId
         this.edgeLabel = edgeLabel
+        this.vertexLabel = vertexLabel
         this.edgeProperties = edgeProperties
         this.vertexProperties = vertexProperties
         return this
+    }
+
+    EntityFacadeImpl getEntityFacadeImpl() {
+        return this.efi
     }
 
     def applyPredicate( edgeOrVertex, String propName, String predicateText, Object propValue) {

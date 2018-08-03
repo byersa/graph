@@ -86,7 +86,8 @@ JanusGraph janusGraph
         this.datasourceNode = nd
 
         janusGraph = JanusGraphFactory.build().
-                set("storage.backend", "inmemory").
+                set("storage.backend", "berkeleyje").
+                set("storage.directory", "graphdb").
 //                set("storage.hostname", "127.0.0.1").
                 open()
         //janusGraphClient = janusGraph.traversal()
