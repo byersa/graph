@@ -21,6 +21,7 @@ import org.moqui.entity.EntityFind
 import org.moqui.impl.entity.EntityFindImpl
 import org.moqui.entity.EntityValue
 import org.moqui.impl.entity.EntityValueImpl
+import org.apache.tinkerpop.gremlin.driver.Client
 
 import org.joda.time.format.*
 
@@ -46,11 +47,17 @@ import org.janusgraph.graphdb.database.management.ManagementSystem
 import org.janusgraph.core.VertexLabel
 import org.janusgraph.core.PropertyKey
 import org.janusgraph.core.EdgeLabel
+import org.janusgraph.graphdb.tinkerpop.JanusGraphIoRegistry
+
+import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoMapper
+import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoMapper.Builder
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource
 import org.janusgraph.graphdb.database.management.ManagementSystem
 import org.janusgraph.graphdb.database.StandardJanusGraph
-
-
+import org.apache.tinkerpop.gremlin.driver.Cluster
+import org.apache.tinkerpop.gremlin.structure.util.empty.EmptyGraph
+import org.apache.tinkerpop.gremlin.driver.remote.DriverRemoteConnection
+import org.apache.tinkerpop.gremlin.structure.Graph
 
 
 /**
@@ -71,11 +78,17 @@ class JanusGraphDatasourceFactory implements EntityDatasourceFactory {
     protected MNode datasourceNode
     protected String tenantId
 
-    protected StandardJanusGraph janusGraph
+    protected Graph graph
     protected GraphTraversalSource janusGraphClient
+    protected org.apache.tinkerpop.gremlin.driver.Cluster cluster
+    protected String contactPoint = "192.168.1.197" //"localhost"
+    protected int port = 8182
+    //protected GryoMapper.Builder mapperBuilder = GryoMapper.build()
+    protected GryoMapper mapper //= mapperBuilder.addRegistry(JanusGraphIoRegistry.INSTANCE).create()
+
+    protected serializer //= new org.apache.tinkerpop.gremlin.driver.ser.GryoMessageSerializerV3d0(mapper)
     //protected JanusGraphManagement janusGraphMgmt
 
-JanusGraph janusGraph
 
     JanusGraphDatasourceFactory() { 
     }
@@ -85,35 +98,62 @@ JanusGraph janusGraph
         this.efi = (EntityFacadeImpl) ef
         this.datasourceNode = nd
 
-        janusGraph = JanusGraphFactory.build().
-                set("storage.backend", "berkeleyje").
-                set("storage.directory", "graphdb").
-//                set("storage.hostname", "127.0.0.1").
-                open()
+        JanusGraphIoRegistry registry = JanusGraphIoRegistry.getInstance()
+        JanusGraphIoRegistry registry2 = JanusGraphIoRegistry.INSTANCE
+        GryoMapper.Builder mapperBuilder = GryoMapper.build().addRegistry(registry)
+//        GryoMapper mapper = mapperBuilder.create()
+        serializer = new org.apache.tinkerpop.gremlin.driver.ser.GryoMessageSerializerV3d0(mapperBuilder)
+//        Cluster.Builder builder = Cluster.build()
+//        builder.addContactPoint(contactPoint)
+//        builder.port(port)
+//        builder.serializer(serializer)
+//        cluster = builder.create()
+        cluster = Cluster.build().
+                addContactPoint(contactPoint).
+                port(port).
+                serializer(serializer).
+                create()
+
+        //janusGraph = JanusGraphFactory.build(). set("storage.backend", "berkeleyje"). set("storage.directory", "graphdb"). open()
+        graph = EmptyGraph.instance()
         //janusGraphClient = janusGraph.traversal()
         //janusGraphMgmt = janusGraph.openManagement()
-        logger.info("janusGraphClient: ${janusGraphClient}")
+        //logger.info("janusGraphClient: ${janusGraphClient}")
         initCreateAndUpdateStamps()
         return this
     }
 
+    GraphTraversalSource getTraversal() {
+        //GraphTraversalSource g = graph.traversal().withRemote(DriverRemoteConnection.using(cluster, "g"))
+        GraphTraversalSource g = graph.traversal().withRemote("conf/remote-graph.properties")
+        logger.info("JanusGraphDatasourceFactory::getTraversal, g: ${g}")
+        return g
+    }
+
+    org.apache.tinkerpop.gremlin.driver.Client getClient() {
+        org.apache.tinkerpop.gremlin.driver.Client client = cluster.connect().init()
+        return client
+    }
+
     void initCreateAndUpdateStamps() {
-        logger.info("in initCreateAndUpdateStamp")
-        PropertyKey propKey
-        ManagementSystem mgmt = janusGraph.openManagement()
-        List <String> fieldNames = ["createdDate", "lastUpdatedStamp"]
-        fieldNames.each() { fieldName ->
-            propKey = mgmt.getPropertyKey(fieldName)
-            logger.info("propKey (1): ${propKey}")
-            if (!propKey) {
-                logger.info("fieldName: ${fieldName}")
-                mgmt.makePropertyKey(fieldName).dataType(java.util.Date.class).make()
-                propKey = mgmt.getPropertyKey(fieldName)
-                logger.info("propKey (2): ${propKey.name()}")
-            } else {
-                logger.info("existing propKey: ${fieldName}")
-            }
-        }
+
+//        logger.info("in initCreateAndUpdateStamp")
+//        PropertyKey propKey
+//        ManagementSystem mgmt = janusGraph.openManagement()
+//        List <String> fieldNames = ["createdDate", "lastUpdatedStamp"]
+//        fieldNames.each() { fieldName ->
+//            propKey = mgmt.getPropertyKey(fieldName)
+//            logger.info("propKey (1): ${propKey}")
+//            if (!propKey) {
+//                logger.info("fieldName: ${fieldName}")
+//                mgmt.makePropertyKey(fieldName).dataType(java.util.Date.class).make()
+//                propKey = mgmt.getPropertyKey(fieldName)
+//                logger.info("propKey (2): ${propKey.name()}")
+//            } else {
+//                logger.info("existing propKey: ${fieldName}")
+//            }
+//        }
+        return
     }
 
     GraphTraversalSource getJanusGraphClient() { return janusGraphClient}
@@ -121,9 +161,10 @@ JanusGraph janusGraph
     /** Returns the main database access object for OrientDB.
      * Remember to call close() on it when you're done with it (preferably in a try/finally block)!
      */
-    StandardJanusGraph getDatabase() {
-        return janusGraph
+    Graph getDatabase() {
+        return graph
     }
+
     String getGroupName() { return datasourceNode.attribute("group-name")}
 
     @Override
@@ -146,71 +187,72 @@ JanusGraph janusGraph
     @Override
     void checkAndAddTable(java.lang.String tableName) {
 
-            logger.info("checking: ${tableName}")
-        janusGraph.tx().rollback()
-        JanusGraphManagement mgmt = janusGraph.openManagement()
-        //JanusGraphManagement mgmt = janusGraph.openManagement()
-        logger.info("checking isOpen(1): ${mgmt.isOpen()}")
 
-            String labelString
-            def ed = efi.getEntityDefinition(tableName)
-            String entityName = ed.getEntityName()
-            MNode entityNode = ed.getEntityNode()
-            String graphMode = entityNode.attribute("graphMode")
-        Character edgeOrVertex = Character.toLowerCase(entityName.charAt(0))
-        logger.info("edgeOrVertex: ${edgeOrVertex}")
-        if (edgeOrVertex == 'e') {
-                EdgeLabel edgeLabel = mgmt.getOrCreateEdgeLabel(entityName)
-//                if (!edgeLabel) {
-//                    mgmt.makeEdgeLabel(entityName).multiplicity(Multiplicity.MULTI).make()
+//            logger.info("checking: ${tableName}")
+//        janusGraph.tx().rollback()
+//        JanusGraphManagement mgmt = janusGraph.openManagement()
+//        //JanusGraphManagement mgmt = janusGraph.openManagement()
+//        logger.info("checking isOpen(1): ${mgmt.isOpen()}")
+//
+//            String labelString
+//            def ed = efi.getEntityDefinition(tableName)
+//            String entityName = ed.getEntityName()
+//            MNode entityNode = ed.getEntityNode()
+//            String graphMode = entityNode.attribute("graphMode")
+//        Character edgeOrVertex = Character.toLowerCase(entityName.charAt(0))
+//        logger.info("edgeOrVertex: ${edgeOrVertex}")
+//        if (edgeOrVertex == 'e') {
+//                EdgeLabel edgeLabel = mgmt.getOrCreateEdgeLabel(entityName)
+////                if (!edgeLabel) {
+////                    mgmt.makeEdgeLabel(entityName).multiplicity(Multiplicity.MULTI).make()
+////                }
+////                edgeLabel = mgmt.getEdgeLabel(entityName)
+//                if (!edgeLabel || (edgeLabel.name() != entityName)) {
+//                    throw new Exception( "Cannot create vertex label: " + entityName)
 //                }
-//                edgeLabel = mgmt.getEdgeLabel(entityName)
-                if (!edgeLabel || (edgeLabel.name() != entityName)) {
-                    throw new Exception( "Cannot create vertex label: " + entityName)
-                }
-        }
-        if (edgeOrVertex == 'v') {
-            VertexLabel vertexLabel = mgmt.getOrCreateVertexLabel(entityName)
-//            VertexLabel vertexLabel = mgmt.getVertexLabel(entityName)
-//                if (!vertexLabel) {
-//                    mgmt.makeVertexLabel(entityName).make()
+//        }
+//        if (edgeOrVertex == 'v') {
+//            VertexLabel vertexLabel = mgmt.getOrCreateVertexLabel(entityName)
+////            VertexLabel vertexLabel = mgmt.getVertexLabel(entityName)
+////                if (!vertexLabel) {
+////                    mgmt.makeVertexLabel(entityName).make()
+////                }
+////                vertexLabel = mgmt.getVertexLabel(entityName)
+//                if (!vertexLabel || (vertexLabel.name() != entityName)) {
+//                    throw new Exception( "Cannot create vertex label: " + entityName)
 //                }
-//                vertexLabel = mgmt.getVertexLabel(entityName)
-                if (!vertexLabel || (vertexLabel.name() != entityName)) {
-                    throw new Exception( "Cannot create vertex label: " + entityName)
-                }
-        }
-
-        if (edgeOrVertex == 'e' || edgeOrVertex == 'v') {
-            List<String> fieldNames = ed.getFieldNames(true, true)
-            MNode nd
-            String typ
-            Class clazz
-            PropertyKey propKey
-            fieldNames.each() { fieldName ->
-                propKey = mgmt.getPropertyKey(fieldName)
-                if (!propKey) {
-                    nd = ed.getFieldNode(fieldName)
-                    typ = nd.attribute("type")
-                    clazz = getDataType(typ)
-                    logger.info("fieldName: ${fieldName}")
-                    mgmt.makePropertyKey(fieldName).dataType(clazz).make()
-                    propKey = mgmt.getPropertyKey(fieldName)
-                    logger.info("propKey: ${propKey.name()}")
-                } else {
-                    logger.info("existing propKey: ${propKey.name()}")
-                }
-            }
-        } else {
-            logger.info("NOT processing: ${entityName}")
-        }
-        Iterator <VertexLabel> iter = mgmt.getVertexLabels().iterator()
-        VertexLabel lbl
-        while (iter.hasNext()) {
-           lbl = iter.next()
-            logger.info("vertex label: ${lbl.name()}")
-        }
-        mgmt.commit()
+//        }
+//
+//        if (edgeOrVertex == 'e' || edgeOrVertex == 'v') {
+//            List<String> fieldNames = ed.getFieldNames(true, true)
+//            MNode nd
+//            String typ
+//            Class clazz
+//            PropertyKey propKey
+//            fieldNames.each() { fieldName ->
+//                propKey = mgmt.getPropertyKey(fieldName)
+//                if (!propKey) {
+//                    nd = ed.getFieldNode(fieldName)
+//                    typ = nd.attribute("type")
+//                    clazz = getDataType(typ)
+//                    logger.info("fieldName: ${fieldName}")
+//                    mgmt.makePropertyKey(fieldName).dataType(clazz).make()
+//                    propKey = mgmt.getPropertyKey(fieldName)
+//                    logger.info("propKey: ${propKey.name()}")
+//                } else {
+//                    logger.info("existing propKey: ${propKey.name()}")
+//                }
+//            }
+//        } else {
+//            logger.info("NOT processing: ${entityName}")
+//        }
+//        Iterator <VertexLabel> iter = mgmt.getVertexLabels().iterator()
+//        VertexLabel lbl
+//        while (iter.hasNext()) {
+//           lbl = iter.next()
+//            logger.info("vertex label: ${lbl.name()}")
+//        }
+//        mgmt.commit()
         return
     }
 
@@ -256,7 +298,7 @@ JanusGraph janusGraph
 
     void destroy() {
         super.destroy()
-        janusGraph.close()
+        graph.close()
         return
     }
 }

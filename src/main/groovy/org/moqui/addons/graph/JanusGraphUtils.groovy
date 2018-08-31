@@ -3,17 +3,30 @@ package org.moqui.addons.graph
 import org.janusgraph.graphdb.database.StandardJanusGraph
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource
+import org.apache.tinkerpop.gremlin.structure.Graph
 import org.apache.tinkerpop.gremlin.structure.Edge
 import org.apache.tinkerpop.gremlin.structure.Vertex
 import org.apache.tinkerpop.gremlin.structure.Property
+import org.apache.tinkerpop.gremlin.structure.Element
+import org.apache.tinkerpop.gremlin.structure.util.empty.EmptyGraph
+import org.apache.tinkerpop.gremlin.driver.Client
+import org.apache.tinkerpop.gremlin.driver.ResultSet
+
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.__
 
 import java.sql.Timestamp
+import java.util.concurrent.CompletableFuture
 import org.moqui.context.ExecutionContext
+import org.moqui.impl.context.ExecutionContextImpl
+import org.moqui.impl.entity.EntityFacadeImpl
 import org.moqui.impl.entity.EntityDefinition
 import org.moqui.entity.EntityFacade
+import org.moqui.entity.EntityValue
+import org.moqui.impl.entity.EntityValueImpl
 import org.moqui.entity.EntityDatasourceFactory
 import org.moqui.addons.graph.JanusGraphEntityValue
 import org.moqui.entity.EntityCondition
+import org.moqui.entity.EntityException
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -158,16 +171,96 @@ class JanusGraphUtils {
     }
 
 
-    static org.apache.tinkerpop.gremlin.structure.Edge addEdge(org.apache.tinkerpop.gremlin.structure.Vertex fromVertex, Object edgeId,
+    static org.apache.tinkerpop.gremlin.structure.Edge addEdge(org.apache.tinkerpop.gremlin.structure.Vertex fromVertex,
                         org.apache.tinkerpop.gremlin.structure.Vertex toVertex,
-                        String label, Map<String,Object> edgeProperties, EntityFacade entityFacade) {
-        Edge e = fromVertex.addEdge(label, toVertex, null)
-        Property prop
-        edgeProperties.each {fieldName, val ->
-                prop = e.property(fieldName, val)
-                logger.info("Edge Property for (${fieldName}): ${prop.value()}")
+                        String label, Map<String,Object> edgeProperties,
+                        org.apache.tinkerpop.gremlin.driver.Client passedClient,
+                                                               ExecutionContextImpl ec) {
+
+        org.apache.tinkerpop.gremlin.driver.Client client = passedClient
+        if (!client) {
+            client = JanusGraphUtils.getClient(ec)
         }
-        return e
+        logger.info("in addEdge fromVertex id: ${fromVertex.id()}")
+        Object fromId = fromVertex.id()
+        Object toId = toVertex.id()
+        StringBuilder eStr = StringBuilder.newInstance()
+        eStr << "g.V('${fromId}').as('a').V('${toId}').addE('${label}').from('a')"
+        Property prop
+        Object value
+        edgeProperties.each {fieldName, val ->
+            eStr << ".property('${fieldName}', "
+            if (val instanceof String) {
+                eStr << "'${val}'"
+            } else {
+                eStr << "${val}"
+            }
+            eStr << ")"
+        }
+        eStr << ".next()"
+        logger.info("in addEdge eStr: ${eStr.toString()}")
+        org.apache.tinkerpop.gremlin.driver.ResultSet results = client.submit(eStr.toString());
+        Edge edge = results.one().getEdge();
+
+        logger.info("Edge: ${edge}")
+        if (!passedClient) {
+            client.close()
+        }
+        client.close()
+        return edge ? edge : null
+    }
+
+    static EntityValue storeVertexAndEdge(org.apache.tinkerpop.gremlin.structure.Vertex fromVertex,
+            EntityValue targetEntity,
+            String edgeLabel, Map <String,Object> edgeProperties, Map <String,Object> vertexProperties,
+                                          org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource gg,
+                                          ExecutionContextImpl ec) throws EntityException {
+        EntityFacadeImpl ef = ec.getEntityFacade()
+        EntityDefinition ed = ef.getEntityDefinition(fromVertex.label())
+
+        GraphTraversalSource g = gg
+        if (!gg) {
+            g = JanusGraphUtils.getTraversal(ec)
+        }
+        // Add or update "to" vertex
+        Object thisId = vertexProperties?.id
+
+        EntityValue pci = targetEntity
+        //try {
+            if (!pci) {
+                pci =  new JanusGraphEntityValue(ed, ef, null)
+                pci.setAll(vertexProperties)
+                pci.create(g)
+            } else {
+                pci.setAll(vertexProperties)
+                pci.update(g)
+            }
+        //} catch(EntityException err) {
+            //logger.info("in storeVertexAndEdge, err: ${err}")
+        //}
+        logger.info("in storeVertexAndEdge, pci: ${pci}")
+        String thisEdgeLabel = edgeLabel?: edgeProperties.label
+        logger.info("in storeVertexAndEdge, thisEdgeLabel: ${thisEdgeLabel}")
+        org.apache.tinkerpop.gremlin.structure.Edge e
+        if (targetEntity) {
+            def iter = g.V(fromVertex.id()).outE(thisEdgeLabel).where(__.otherV().hasId(targetEntity.getVertex().id())).iterator()
+
+            if (iter.hasNext()) {
+                e = iter.next()
+            }
+        }
+        if (!e) {
+            e = JanusGraphUtils.addEdge(fromVertex, pci.getVertex(), thisEdgeLabel?:"defaultEdgeLabel", edgeProperties, null, ec)
+        }
+
+        // smartly add in edge properties
+        //JanusGraphUtils.addProperties(e, edgeProperties)
+
+        if (!gg) {
+            //g.tx().commit()
+            g.close()
+        }
+        return pci
     }
 
     static void debugStart (fromName) {
@@ -177,10 +270,10 @@ class JanusGraphUtils {
     static org.apache.tinkerpop.gremlin.structure.Vertex getRootVertex(  ExecutionContext ec) {
 
         org.apache.tinkerpop.gremlin.structure.Vertex v
-        EntityFacade efi = ec.getEntityFacade()
-        JanusGraphDatasourceFactory ddf = efi.getDatasourceFactory("transactional_nosql") as JanusGraphDatasourceFactory
-        StandardJanusGraph janusGraph = ddf.getDatabase()
-        GraphTraversalSource g = janusGraph.traversal()
+//        EntityFacade efi = ec.getEntityFacade()
+//        JanusGraphDatasourceFactory ddf = efi.getDatasourceFactory("transactional_nosql") as JanusGraphDatasourceFactory
+//        Graph graph = ddf.getDatabase()
+        GraphTraversalSource g = JanusGraphUtils.getTraversal(ec)
         List <org.apache.tinkerpop.gremlin.structure.Vertex> fillList = new ArrayList()
         g.V().hasLabel('root').fill(fillList)
         if (fillList.size()) {
@@ -188,9 +281,52 @@ class JanusGraphUtils {
         } else {
             v = g.addV('root').next()
         }
-        g.tx().commit()
+        //g.tx().commit()
         g.close()
         return v
     }
 
+    static Graph instantiateDatabase(ExecutionContextImpl ec) {
+        return JanusGraphUtils.getDatabase(ec)
+    }
+
+    static Graph getDatabase(ExecutionContextImpl ec) {
+        EntityFacadeImpl efi = ec.getEntityFacade()
+        JanusGraphDatasourceFactory edfi = efi.getDatasourceFactory("transactional_nosql") as JanusGraphDatasourceFactory
+        Graph jG = edfi.getDatabase()
+        return jG
+    }
+
+    static  org.apache.tinkerpop.gremlin.driver.Client getClient (ExecutionContext ec) {
+        EntityFacadeImpl efi = ec.getEntityFacade()
+        logger.info("JanusGraphUtils::getTraversal, efi: ${efi}")
+        JanusGraphDatasourceFactory edfi = efi.getDatasourceFactory("transactional_nosql") as JanusGraphDatasourceFactory
+        logger.info("JanusGraphUtils::getTraversal, edfi: ${edfi}")
+        org.apache.tinkerpop.gremlin.driver.Client client = edfi.getClient()
+        logger.info("JanusGraphUtils::getTraversal, client: ${client}")
+        return client
+    }
+
+    static GraphTraversalSource getTraversal (ExecutionContext ec) {
+        EntityFacadeImpl efi = ec.getEntityFacade()
+        logger.info("JanusGraphUtils::getTraversal, efi: ${efi}")
+        JanusGraphDatasourceFactory edfi = efi.getDatasourceFactory("transactional_nosql") as JanusGraphDatasourceFactory
+        logger.info("JanusGraphUtils::getTraversal, edfi: ${edfi}")
+        //Graph jG = JanusGraphUtils.getDatabase(ec)
+        GraphTraversalSource g = edfi.getTraversal()
+        logger.info("JanusGraphUtils::getTraversal, g: ${g}")
+        return g
+    }
+
+    static void addProperties(org.apache.tinkerpop.gremlin.structure.Element elem, Map<String,Object> props) {
+        Object elemVal
+        props.each {k,v ->
+            elemVal = elem.property(k)
+            if (elemVal == v) {
+            } else {
+                elem.property(k,v)
+            }
+        }
+        return
+    }
 }

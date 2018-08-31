@@ -22,8 +22,12 @@ import org.janusgraph.core.schema.JanusGraphManagement
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal
 
+import org.apache.tinkerpop.gremlin.structure.Graph
 import org.apache.tinkerpop.gremlin.structure.Vertex
 import org.apache.tinkerpop.gremlin.structure.VertexProperty
+import org.apache.tinkerpop.gremlin.structure.util.empty.EmptyGraph
+import org.apache.tinkerpop.gremlin.driver.Client
+import org.apache.tinkerpop.gremlin.driver.ResultSet
 
 import java.sql.Timestamp
 import java.util.Date
@@ -68,119 +72,171 @@ class JanusGraphEntityValue extends EntityValueBase {
         this.ddf = ddf
     }
 
+
     JanusGraphEntityValue(EntityDefinition ed, EntityFacadeImpl efip, org.apache.tinkerpop.gremlin.structure.Vertex v) {
         super(ed, efip)
         setVertex(v)
     }
-    StandardJanusGraph getDatabase() {
+
+    Graph getDatabase() {
+        JanusGraphDatasourceFactory edfi = getDatasource()
+        Graph janusGraph = edfi.getDatabase()
+        return janusGraph
+    }
+
+    JanusGraphDatasourceFactory getDatasource () {
         EntityFacadeImpl efi = getEntityFacadeImpl()
         EntityDefinition ed = getEntityDefinition()
         JanusGraphDatasourceFactory edfi = efi.getDatasourceFactory(ed.getEntityGroupName()) as JanusGraphDatasourceFactory
-        StandardJanusGraph janusGraph = edfi.getDatabase()
-        return janusGraph
+        return edfi
     }
-    public EntityValue create() {
-        StandardJanusGraph janusGraph = getDatabase()
-        GraphTraversalSource g = janusGraph.traversal()
+
+    org.apache.tinkerpop.gremlin.driver.Client getClient () {
+        JanusGraphDatasourceFactory edfi = getDatasource()
+        org.apache.tinkerpop.gremlin.driver.Client client = edfi.getClient()
+        return client
+    }
+
+    GraphTraversalSource getTraversal () {
+        JanusGraphDatasourceFactory edfi = getDatasource()
+        GraphTraversalSource g = edfi.getTraversal()
+        return g
+    }
+
+    public EntityValue create( ) {
+        this.create(null)
+    }
+
+    public EntityValue create( org.apache.tinkerpop.gremlin.driver.Client passedClient) {
+
+        org.apache.tinkerpop.gremlin.driver.Client client = passedClient
+        if (!client) {
+            client = getClient()
+        }
         //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
         //ManagementSystem mgmt = janusGraph.openManagement()
         //StandardJanusGraphTx tx = mgmt.getWrappedTx()
         EntityDefinition ed = getEntityDefinition()
+        java.util.Date sameDate = new java.util.Date(new Timestamp(System.currentTimeMillis()).getTime())
         String labelName = ed.getEntityNode().attribute("entity-name")
-        Vertex v = g.addV(labelName).iterator().next()
+        StringBuilder eStr = StringBuilder.newInstance()
+        eStr << "g.addV('${labelName}')"
+        List fieldNames = ed.getAllFieldNames()
+        EntityValue _this = this
+        VertexProperty vProp
+        Object val
+        fieldNames.each {fieldName ->
+            if (_this.get(fieldName)) {
+                eStr << ".property('${fieldName}', "
+                val = _this.getDataValue(fieldName)
+                if (val instanceof String) {
+                    eStr << "'${val}'"
+                } else {
+                    eStr << "${val}"
+                }
+                logger.info("fieldName: ${fieldName}")
+                eStr << ")"
+            }
+        }
+        eStr << ".property('createdDate', ${sameDate.getTime()})"
+        eStr << ".property('lastUpdatedStamp', ${sameDate.getTime()})"
+        eStr << ".next()"
+        org.apache.tinkerpop.gremlin.driver.ResultSet results = client.submit(eStr.toString());
+        org.apache.tinkerpop.gremlin.structure.Vertex v = results.one().getVertex();
         setVertex(v)
-        this.set("id", v.id())
-        java.util.Date sameDate = new java.util.Date(new Timestamp(System.currentTimeMillis()).getTime())
-        this.set("createdDate", sameDate)
-        this.set("lastUpdatedStamp", sameDate)
-        List fieldNames = ed.getAllFieldNames()
-        EntityValue _this = this
-        VertexProperty vProp
-        fieldNames.each {fieldName ->
-            if (_this.get(fieldName)) {
-                vProp = v.property(fieldName,
-                        _this.getDataValue(fieldName)
-                )
-                logger.info("Property for (${fieldName}): ${vProp.value()}")
-            }
+        if (!passedClient) {
+            client.close()
         }
-        //java.util.Date sameDate = new java.util.Date()
-        //v.property("createdDate", sameDate)
-        //v.property("lastUpdatedStamp", sameDate)
-        //Map map = new HashMap()
-        //map.putAll(v.properties().collectEntries {it ->[(it.key()):it.value()]})
-        //logger.info("Created vertex: ${map}")
-        //logger.info("Created entity: ${this.getValueMap()}")
-        g.tx().commit()
-        g.close()
         return this
     }
 
-    public EntityValue update() {
-        StandardJanusGraph janusGraph = getDatabase()
-        GraphTraversalSource g = janusGraph.traversal()
-        //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
-        //ManagementSystem mgmt = janusGraph.openManagement()
-        //StandardJanusGraphTx tx = mgmt.getWrappedTx()
+    public EntityValue update( ) {
+        this.update(null)
+    }
+
+    public EntityValue update( org.apache.tinkerpop.gremlin.driver.Client passedClient) {
+
+        logger.info("in JGEntityValue::update, this: ${this}")
+        org.apache.tinkerpop.gremlin.driver.Client client = passedClient
+        if (!client) {
+            client = getClient()
+        }
+        logger.info("in JGEntityValue::update, client: ${client}")
         EntityDefinition ed = getEntityDefinition()
-        //JanusGraphVertex v = mgmt.getSchemaVertex(mgmt.getSchemaElement(this.getId()))
-        Vertex v
-        if (!vertex) {
-            v = g.V(this.getId()).iterator().next()
-            setVertex(v)
-        } else {
-            v = vertex
-        }
-
+        logger.info("in JGEntityValue::update, ed: ${ed}")
         java.util.Date sameDate = new java.util.Date(new Timestamp(System.currentTimeMillis()).getTime())
-        this.set("lastUpdatedStamp", sameDate)
+        Vertex v = this.getVertex()
+        logger.info("in JGEntityValue::update, v: ${v}")
         List fieldNames = ed.getAllFieldNames()
+        logger.info("in JGEntityValue::update, fieldNames: ${fieldNames}")
         EntityValue _this = this
         VertexProperty vProp
+        String gremlin
+        Object val, existingVal
+        org.apache.tinkerpop.gremlin.driver.ResultSet results
         fieldNames.each {fieldName ->
-            if (_this.get(fieldName)) {
-                vProp = v.property(fieldName,
-                        _this.getDataValue(fieldName)
-                )
-                logger.info("Property for (${fieldName}): ${vProp.value()}")
+            logger.info("in JGEntityValue::update, fieldName: ${fieldName}")
+            existingVal = v.property(fieldName)
+            logger.info("in JGEntityValue::update, existingVal: ${existingVal}")
+            val = _this.get(fieldName)
+            logger.info("in JGEntityValue::update,  val: ${val}")
+            if (existingVal != val) {
+                if (existingVal.isPresent()) {
+                    gremlin = "g.V('${v.id()}').properties('${fieldName}').drop()"
+                    logger.info("in JGEntityValue::update, gremlin: ${gremlin}")
+                    results = client.submit(gremlin.toString());
+                    logger.info("in JGEntityValue::update, results (2): ${results}")
+                }
+
+                StringBuilder eStr = StringBuilder.newInstance()
+                eStr << "g.V('${v.id()}').property('${fieldName}', "
+                val = _this.getDataValue(fieldName)
+                if (val instanceof String) {
+                    eStr << "'${val}'"
+                } else {
+                    eStr << "${val}"
+                }
+                logger.info("in JGEntityValue::update, eStr: ${eStr}")
+                eStr << ").next()"
+                results = client.submit(eStr.toString());
+                logger.info("in JGEntityValue::update, results (3): ${results}")
             }
         }
-        //java.util.Date sameDate = new java.util.Date()
-        //v.property("createdDate", sameDate)
-        //v.property("lastUpdatedStamp", sameDate)
-        Map map = new HashMap()
-        map.putAll(v.properties().collectEntries {it ->[(it.key()):it.value()]})
-        logger.info("Updated vertex: ${map}")
-        logger.info("Updated entity: ${this.getValueMap()}")
-        g.tx().commit()
-        g.close()
-        //JanusGraphTransaction tx2 = janusGraph.buildTransaction().start()
-        //JanusGraphVertex v2 = tx2.getVertex(this.getId())
-        //Map map2 = new HashMap()
-        //map2.putAll(v2.properties().collectEntries {it ->[(it.key()):it.value()]})
-        //logger.info("Updated vertex(2): ${map2}")
+        gremlin = "g.V('${v.id()}').properties('lastUpdatedStamp').drop()"
+        logger.info("in JGEntityValue::update, gremlin (4): ${gremlin}")
+        results = client.submit(gremlin.toString());
+        logger.info("in JGEntityValue::update, results (4): ${results}")
+        gremlin = "g.V('${v.id()}').property('lastUpdatedStamp', ${sameDate.getTime()}).next()"
+        logger.info("in JGEntityValue::update, gremlin (5): ${gremlin}")
+        results = client.submit(gremlin.toString());
+        logger.info("in JGEntityValue::update, results (5): ${results}")
+
+        if (!passedClient) {
+            client.close()
+        }
         return this
     }
 
-    public EntityValue delete() {
-        StandardJanusGraph janusGraph = getDatabase()
-        GraphTraversalSource g = janusGraph.traversal()
-        //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
-        //JanusGraphVertex v = tx.getVertex(this.getId())
-        Vertex v = g.V(this.getId()).iterator().next()
-        //JanusGraphTransaction tx = janusGraph.buildTransaction().start()
-        //ManagementSystem mgmt = janusGraph.openManagement()
-        //StandardJanusGraphTx tx = mgmt.getWrappedTx()
-        //EntityDefinition ed = getEntityDefinition()
-        //JanusGraphVertex v = mgmt.getSchemaVertex(mgmt.getSchemaElement(this.getId()))
-        v.remove()
-        g.tx().commit()
-        g.close()
-        return
+    public EntityValue delete( org.apache.tinkerpop.gremlin.driver.Client passedClient) {
+        org.apache.tinkerpop.gremlin.driver.Client client = passedClient
+        if (!client) {
+            client = getClient()
+        }
+        String gremlin
+        Vertex v = this.getVertex()
+        org.apache.tinkerpop.gremlin.driver.ResultSet results
+        if (v) {
+            gremlin = "g.V('${v.id()}').drop()"
+            results = client.submit(gremlin.toString());
+        }
+        if (!passedClient) {
+            client.close()
+        }
+        return v
     }
 
     Object getId() {
-        return this.get("id")
+        return this.getVertex().id()
     }
 
     void testFunction() {
@@ -247,12 +303,17 @@ class JanusGraphEntityValue extends EntityValueBase {
             case "date":
             case "time":
             case "date-time":
-                retVal = new java.util.Date(this.get(fieldName).getTime())
+                //retVal = new java.util.Date(this.get(fieldName).getTime())
+                retVal = get(fieldName)
                 break
             default:
                 retVal = get(fieldName)
         }
         return retVal
+    }
+
+    EntityValue fillFromVertex(v) {
+        return this
     }
 
     EntityValue setAll(Map <String,Object> fieldMap) {
